@@ -2,7 +2,7 @@
 """
 DexTools API Demo - Python Implementation
 This script demonstrates basic connectivity with the DexTools API
-to fetch cryptocurrency token data from Solana and display it in the console.
+to fetch cryptocurrency token data and display it in the console.
 """
 
 import os
@@ -24,47 +24,18 @@ logger = logging.getLogger('dextools_demo')
 load_dotenv()
 
 # Type definitions
-class PoolData(TypedDict):
+class TokenData(TypedDict):
     id: str
     name: str
     symbol: str
-    created: int
-    createdStr: str
-    verified: bool
-    scam: bool
-    volume24h: float
+    address: str
+    chain: str
+    price: Optional[float]
+    volume24h: Optional[float]
 
 class ApiResponse(TypedDict):
     success: bool
-    data: List[PoolData]
-    message: Optional[str]
-
-class PoolInfoData(TypedDict):
-    address: str
-    name: str
-    symbol: str
-    decimals: int
-    totalSupply: str
-    holders: int
-    transactions: int
-    price: float
-    liquidity: float
-    volume24h: float
-    priceChange24h: float
-
-class PoolInfoResponse(TypedDict):
-    success: bool
-    data: PoolInfoData
-    message: Optional[str]
-
-class PricePoint(TypedDict):
-    timestamp: int
-    price: float
-    volume: float
-
-class PriceDataResponse(TypedDict):
-    success: bool
-    data: List[PricePoint]
+    data: Any
     message: Optional[str]
 
 class DexToolsAPI:
@@ -77,104 +48,201 @@ class DexToolsAPI:
             logger.error("API key not found. Please set DEXTOOLS_API_KEY in .env file")
             raise ValueError("API key not found")
             
+        # Base URL from the latest documentation
         self.base_url = 'https://api.dextools.io/v1'
+        
+        # Headers for authentication
         self.headers = {
             'X-API-Key': self.api_key,
             'Accept': 'application/json'
         }
-        logger.info("DexTools API client initialized")
-    
-    def get_recent_solana_pools(self, limit: int = 10) -> ApiResponse:
-        """
-        Fetch recently created pools on Solana
         
-        Args:
-            limit: Number of pools to retrieve (default: 10)
-            
-        Returns:
-            ApiResponse containing list of recent pools
+        logger.info("DexTools API client initialized")
+        logger.info(f"Using API key: {self.api_key[:5]}...{self.api_key[-5:] if len(self.api_key) > 10 else ''}")
+    
+    def get_api_info(self) -> Dict[str, Any]:
         """
-        logger.info(f"Fetching {limit} recent Solana pools")
+        Get API information to verify connectivity
+        
+        Returns:
+            Dict containing API information
+        """
+        logger.info("Fetching API information")
         
         try:
-            response = requests.get(
-                f"{self.base_url}/pool/solana/created",
-                headers=self.headers,
-                params={
-                    'limit': limit,
-                    'sort': 'created'
-                }
-            )
-            response.raise_for_status()
-            data = response.json()
+            # Try different endpoints to check connectivity
+            endpoints = [
+                "/info",
+                "/status",
+                "/health"
+            ]
             
-            logger.info(f"Successfully retrieved {len(data.get('data', []))} Solana pools")
-            return data
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching recent Solana pools: {str(e)}")
-            if hasattr(e, 'response') and e.response:
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response data: {e.response.text}")
+            for endpoint in endpoints:
+                try:
+                    logger.info(f"Trying endpoint: {endpoint}")
+                    response = requests.get(
+                        f"{self.base_url}{endpoint}",
+                        headers=self.headers
+                    )
+                    response.raise_for_status()
+                    data = response.json() if response.text else {"status": "ok"}
+                    logger.info(f"API connection successful via {endpoint}")
+                    return data
+                except requests.exceptions.RequestException as e:
+                    logger.warning(f"Endpoint {endpoint} failed: {str(e)}")
+                    continue
+            
+            # If we get here, all endpoints failed
+            raise Exception("All API info endpoints failed")
+        except Exception as e:
+            logger.error(f"Error fetching API information: {str(e)}")
             raise
     
-    def get_pool_info(self, pool_address: str) -> PoolInfoResponse:
+    def get_supported_chains(self) -> Dict[str, Any]:
         """
-        Get detailed information about a specific pool
+        Get list of supported chains
         
-        Args:
-            pool_address: Address of the pool to query
-            
         Returns:
-            PoolInfoResponse containing pool details
+            Dict containing supported chains
         """
-        logger.info(f"Fetching info for pool: {pool_address}")
+        logger.info("Fetching supported chains")
         
         try:
             response = requests.get(
-                f"{self.base_url}/pool/solana/{pool_address}/info",
+                f"{self.base_url}/chain",
                 headers=self.headers
             )
             response.raise_for_status()
             data = response.json()
             
-            logger.info(f"Successfully retrieved info for pool: {pool_address}")
+            logger.info(f"Successfully retrieved supported chains")
             return data
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching pool info for {pool_address}: {str(e)}")
+            logger.error(f"Error fetching supported chains: {str(e)}")
+            if hasattr(e, 'response') and e.response:
+                logger.error(f"Response status: {e.response.status_code}")
+                logger.error(f"Response data: {e.response.text}")
             raise
     
-    def get_pool_price_data(self, pool_address: str, hours: int = 24) -> PriceDataResponse:
+    def get_hot_pairs(self, chain: str = 'ether') -> Dict[str, Any]:
         """
-        Get price data for a specific pool
+        Get hot pairs for a specific chain
         
         Args:
-            pool_address: Address of the pool to query
-            hours: Number of hours of historical data to retrieve (default: 24)
+            chain: Chain ID (default: ether)
             
         Returns:
-            PriceDataResponse containing historical price data
+            Dict containing hot pairs
         """
-        logger.info(f"Fetching {hours}h price data for pool: {pool_address}")
-        
-        current_time = int(time.time())
-        from_time = current_time - (hours * 3600)
+        logger.info(f"Fetching hot pairs for chain: {chain}")
         
         try:
             response = requests.get(
-                f"{self.base_url}/pool/solana/{pool_address}/prices",
+                f"{self.base_url}/pair/{chain}/hot",
+                headers=self.headers
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            logger.info(f"Successfully retrieved hot pairs for chain: {chain}")
+            return data
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error fetching hot pairs for chain {chain}: {str(e)}")
+            if hasattr(e, 'response') and e.response:
+                logger.error(f"Response status: {e.response.status_code}")
+                logger.error(f"Response data: {e.response.text}")
+            raise
+    
+    def search_tokens(self, query: str) -> Dict[str, Any]:
+        """
+        Search for tokens by name or symbol
+        
+        Args:
+            query: Search query
+            
+        Returns:
+            Dict containing search results
+        """
+        logger.info(f"Searching for tokens with query: {query}")
+        
+        try:
+            response = requests.get(
+                f"{self.base_url}/token/search",
                 headers=self.headers,
                 params={
-                    'from': from_time,
-                    'to': current_time
+                    'query': query
                 }
             )
             response.raise_for_status()
             data = response.json()
             
-            logger.info(f"Successfully retrieved price data for pool: {pool_address}")
+            logger.info(f"Successfully searched for tokens with query: {query}")
             return data
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching price data for {pool_address}: {str(e)}")
+            logger.error(f"Error searching for tokens: {str(e)}")
+            if hasattr(e, 'response') and e.response:
+                logger.error(f"Response status: {e.response.status_code}")
+                logger.error(f"Response data: {e.response.text}")
+            raise
+    
+    def get_token_info(self, chain: str, token_address: str) -> Dict[str, Any]:
+        """
+        Get detailed information about a specific token
+        
+        Args:
+            chain: Chain ID (e.g., 'ether', 'bsc')
+            token_address: Address of the token to query
+            
+        Returns:
+            Dict containing token details
+        """
+        logger.info(f"Fetching info for token: {token_address} on chain: {chain}")
+        
+        try:
+            response = requests.get(
+                f"{self.base_url}/token/{chain}/{token_address}",
+                headers=self.headers
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            logger.info(f"Successfully retrieved info for token: {token_address}")
+            return data
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error fetching token info for {token_address}: {str(e)}")
+            if hasattr(e, 'response') and e.response:
+                logger.error(f"Response status: {e.response.status_code}")
+                logger.error(f"Response data: {e.response.text}")
+            raise
+    
+    def get_pair_info(self, chain: str, pair_address: str) -> Dict[str, Any]:
+        """
+        Get detailed information about a specific trading pair
+        
+        Args:
+            chain: Chain ID (e.g., 'ether', 'bsc')
+            pair_address: Address of the pair to query
+            
+        Returns:
+            Dict containing pair details
+        """
+        logger.info(f"Fetching info for pair: {pair_address} on chain: {chain}")
+        
+        try:
+            response = requests.get(
+                f"{self.base_url}/pair/{chain}/{pair_address}",
+                headers=self.headers
+            )
+            response.raise_for_status()
+            data = response.json()
+            
+            logger.info(f"Successfully retrieved info for pair: {pair_address}")
+            return data
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Error fetching pair info for {pair_address}: {str(e)}")
+            if hasattr(e, 'response') and e.response:
+                logger.error(f"Response status: {e.response.status_code}")
+                logger.error(f"Response data: {e.response.text}")
             raise
 
 def pretty_print_json(data: Dict[str, Any]) -> None:
@@ -189,32 +257,79 @@ def run_demo() -> None:
         # Initialize API client
         api = DexToolsAPI()
         
-        # Step 1: Get recent pools
-        logger.info("Step 1: Fetching recent Solana pools")
-        recent_pools = api.get_recent_solana_pools()
-        print("\n=== Recent Solana Pools ===")
-        pretty_print_json(recent_pools)
+        # Step 1: Test API connectivity
+        logger.info("Step 1: Testing API connectivity")
+        try:
+            api_info = api.get_api_info()
+            print("\n=== API Information ===")
+            pretty_print_json(api_info)
+        except Exception as e:
+            logger.error(f"Failed to connect to API: {str(e)}")
+            return
         
-        # Step 2: If we have pools, get details for the first one
-        if recent_pools.get('success') and recent_pools.get('data') and len(recent_pools['data']) > 0:
-            first_pool = recent_pools['data'][0]
-            pool_address = first_pool['id']
+        # Step 2: Get supported chains
+        logger.info("Step 2: Fetching supported chains")
+        try:
+            chains = api.get_supported_chains()
+            print("\n=== Supported Chains ===")
+            pretty_print_json(chains)
+        except Exception as e:
+            logger.error(f"Failed to fetch chains: {str(e)}")
+        
+        # Step 3: Get hot pairs for Ethereum
+        logger.info("Step 3: Fetching hot pairs for Ethereum")
+        try:
+            hot_pairs = api.get_hot_pairs('ether')
+            print("\n=== Hot Ethereum Pairs ===")
+            pretty_print_json(hot_pairs)
             
-            logger.info(f"Selected pool for detailed analysis: {pool_address}")
+            # If we have pairs, get details for the first one
+            if hot_pairs.get('success') and hot_pairs.get('data') and len(hot_pairs['data']) > 0:
+                first_pair = hot_pairs['data'][0]
+                pair_address = first_pair.get('id')
+                
+                if pair_address:
+                    logger.info(f"Selected pair for detailed analysis: {pair_address}")
+                    
+                    # Step 4: Get detailed info for this pair
+                    logger.info("Step 4: Fetching detailed pair info")
+                    try:
+                        pair_info = api.get_pair_info('ether', pair_address)
+                        print(f"\n=== Pair Info for {pair_address} ===")
+                        pretty_print_json(pair_info)
+                    except Exception as e:
+                        logger.error(f"Failed to fetch pair info: {str(e)}")
+            else:
+                logger.warning("No hot pairs found or API returned an error")
+        except Exception as e:
+            logger.error(f"Failed to fetch hot pairs: {str(e)}")
+        
+        # Step 5: Search for a popular token
+        logger.info("Step 5: Searching for tokens")
+        try:
+            search_results = api.search_tokens('ethereum')
+            print("\n=== Token Search Results for 'ethereum' ===")
+            pretty_print_json(search_results)
             
-            # Step 3: Get detailed info for this pool
-            logger.info("Step 3: Fetching detailed pool info")
-            pool_info = api.get_pool_info(pool_address)
-            print(f"\n=== Pool Info for {pool_address} ===")
-            pretty_print_json(pool_info)
-            
-            # Step 4: Get price data for this pool
-            logger.info("Step 4: Fetching price data")
-            price_data = api.get_pool_price_data(pool_address)
-            print(f"\n=== Price Data for {pool_address} ===")
-            pretty_print_json(price_data)
-        else:
-            logger.warning("No pools found or API returned an error")
+            # If we have search results, get details for the first one
+            if search_results.get('success') and search_results.get('data') and len(search_results['data']) > 0:
+                first_token = search_results['data'][0]
+                token_address = first_token.get('address')
+                token_chain = first_token.get('chain')
+                
+                if token_address and token_chain:
+                    logger.info(f"Selected token for detailed analysis: {token_address} on chain {token_chain}")
+                    
+                    # Step 6: Get detailed info for this token
+                    logger.info("Step 6: Fetching detailed token info")
+                    try:
+                        token_info = api.get_token_info(token_chain, token_address)
+                        print(f"\n=== Token Info for {token_address} ===")
+                        pretty_print_json(token_info)
+                    except Exception as e:
+                        logger.error(f"Failed to fetch token info: {str(e)}")
+        except Exception as e:
+            logger.error(f"Failed to search for tokens: {str(e)}")
         
         logger.info("Demo completed successfully!")
     except Exception as e:

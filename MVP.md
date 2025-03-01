@@ -147,13 +147,42 @@ The script will output:
 
 All data will be displayed in the console as JSON.
 
-## Next Steps
+## API Connectivity Issues
 
-After confirming successful API connectivity, the next steps would be:
+During our testing, we encountered several issues with the DexTools API:
+
+1. **404 Not Found Errors**: All API endpoints we tried returned 404 errors, suggesting that either:
+   - The API endpoints have changed since the documentation was written
+   - The API requires additional authentication or setup
+   - The API may have usage restrictions based on IP address or other factors
+
+2. **Documentation Access Issues**: We were unable to access the API documentation at https://developer.dextools.io/docs/start due to Cloudflare security restrictions.
+
+3. **Website Access Issues**: Direct access to the DexTools website was also blocked by Cloudflare security measures.
+
+### Troubleshooting Steps Taken
+
+1. Verified the API key format and inclusion in request headers
+2. Tried multiple different API endpoints based on common API patterns
+3. Attempted direct curl requests to the API
+4. Checked for documentation access to verify endpoints
+
+### Next Steps for API Integration
+
+To successfully integrate with the DexTools API, the following steps are recommended:
+
+1. Contact DexTools support to verify API access and correct endpoints
+2. Request updated API documentation or examples
+3. Verify if there are any IP restrictions or additional authentication requirements
+4. Consider using a browser-based approach to understand the API by inspecting network requests on the DexTools website
+
+## Next Steps for the Project
+
+After resolving API connectivity issues, the next steps would be:
 
 1. Implement proper data parsing and storage in a database
 2. Add evaluation logic based on the metrics defined in the PRD
 3. Integrate with Twitter API for social validation
 4. Develop the tweet composition and posting functionality
 
-This MVP serves as proof that we can successfully retrieve the necessary data from DexTools to power the Crypto Discovery Bot. 
+This MVP serves as a starting point for integrating with the DexTools API, though additional work is needed to establish successful connectivity. 
