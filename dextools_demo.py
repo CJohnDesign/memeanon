@@ -57,8 +57,11 @@ class DexToolsAPI:
             logger.error("API key not found. Please set DEXTOOLS_API_KEY in .env file")
             raise ValueError("API key not found")
             
-        # Base URL from the latest documentation
+        # Base URL from the latest documentation and the curl example
         self.base_url = 'https://api.dextools.io/v1'
+        
+        # Public API base URL from the curl example
+        self.public_api_base_url = 'https://public-api.dextools.io/trial/v2'
         
         # Alternative base URLs to try if the main one fails
         self.alternative_base_urls = [
@@ -79,6 +82,7 @@ class DexToolsAPI:
         
         return {
             'X-API-Key': self.api_key,
+            'x-api-key': self.api_key,  # Adding the format from the curl example
             'Accept': 'application/json, text/plain, */*',
             'Accept-Language': 'en-US,en;q=0.9',
             'User-Agent': user_agent,
@@ -93,7 +97,8 @@ class DexToolsAPI:
         }
     
     def _make_request(self, endpoint: str, params: Optional[Dict[str, Any]] = None, 
-                     max_retries: int = 3, base_delay: float = 2.0) -> Dict[str, Any]:
+                     max_retries: int = 3, base_delay: float = 2.0,
+                     use_public_api: bool = False) -> Dict[str, Any]:
         """
         Make a request to the API with retry logic and exponential backoff
         
@@ -102,12 +107,18 @@ class DexToolsAPI:
             params: Query parameters to include
             max_retries: Maximum number of retry attempts
             base_delay: Base delay between retries in seconds
+            use_public_api: Whether to use the public API base URL
             
         Returns:
             API response as dictionary
         """
-        # Try with the main base URL first, then fall back to alternatives
-        urls_to_try = [f"{self.base_url}{endpoint}"] + [f"{url}{endpoint}" for url in self.alternative_base_urls]
+        # Determine which base URL to use
+        base_url = self.public_api_base_url if use_public_api else self.base_url
+        
+        # Try with the specified base URL first, then fall back to alternatives if not using public API
+        urls_to_try = [f"{base_url}{endpoint}"]
+        if not use_public_api:
+            urls_to_try += [f"{url}{endpoint}" for url in self.alternative_base_urls]
         
         last_exception = None
         
@@ -190,6 +201,25 @@ class DexToolsAPI:
         # If we get here, all endpoints failed
         raise Exception("All API info endpoints failed")
     
+    def get_solana_gainers(self) -> Dict[str, Any]:
+        """
+        Get top gaining tokens on the Solana blockchain using the specific endpoint
+        
+        Returns:
+            Dict containing top gaining tokens on Solana
+        """
+        logger.info("Fetching top gainers for Solana blockchain")
+        
+        # Use the exact endpoint from the curl example
+        endpoint = "/ranking/solana/gainers"
+        
+        try:
+            # Use the public API base URL
+            return self._make_request(endpoint, use_public_api=True)
+        except Exception as e:
+            logger.error(f"Failed to fetch Solana gainers: {str(e)}")
+            raise Exception("Failed to fetch Solana gainers")
+    
     def get_solana_hot_pairs(self) -> Dict[str, Any]:
         """
         Get hot pairs specifically for the Solana blockchain
@@ -199,8 +229,14 @@ class DexToolsAPI:
         """
         logger.info("Fetching hot pairs for Solana blockchain")
         
-        # The chain ID for Solana might be 'solana', 'sol', or something else
-        # Try different possible chain IDs
+        # Try the specific endpoint format first
+        try:
+            endpoint = "/ranking/solana/hot"
+            return self._make_request(endpoint, use_public_api=True)
+        except Exception as e:
+            logger.warning(f"Specific Solana hot pairs endpoint failed: {str(e)}")
+        
+        # Fall back to trying multiple formats
         chain_ids = ['solana', 'sol', 'slna']
         
         # Try different possible endpoints for hot pairs
@@ -235,8 +271,18 @@ class DexToolsAPI:
         """
         logger.info(f"Fetching {limit} popular tokens on Solana blockchain")
         
-        # The chain ID for Solana might be 'solana', 'sol', or something else
-        # Try different possible chain IDs
+        # Try the specific endpoint format first
+        try:
+            endpoint = "/tokens/solana/list"
+            params = {
+                'limit': limit,
+                'sort': 'volume'
+            }
+            return self._make_request(endpoint, params=params, use_public_api=True)
+        except Exception as e:
+            logger.warning(f"Specific Solana tokens endpoint failed: {str(e)}")
+        
+        # Fall back to trying multiple formats
         chain_ids = ['solana', 'sol', 'slna']
         
         # Try different possible endpoints for tokens
@@ -276,8 +322,14 @@ class DexToolsAPI:
         """
         logger.info(f"Fetching info for Solana pair: {pair_address}")
         
-        # The chain ID for Solana might be 'solana', 'sol', or something else
-        # Try different possible chain IDs
+        # Try the specific endpoint format first
+        try:
+            endpoint = f"/pair/solana/{pair_address}"
+            return self._make_request(endpoint, use_public_api=True)
+        except Exception as e:
+            logger.warning(f"Specific Solana pair info endpoint failed: {str(e)}")
+        
+        # Fall back to trying multiple formats
         chain_ids = ['solana', 'sol', 'slna']
         
         # Try different possible endpoints for pair info
@@ -323,8 +375,18 @@ def run_demo() -> None:
             logger.error(f"Failed to connect to API: {str(e)}")
             logger.info("Continuing with Solana endpoints despite connectivity test failure...")
         
-        # Step 2: Try to get hot pairs for Solana
-        logger.info("Step 2: Attempting to fetch hot pairs for Solana")
+        # Step 2: Try to get Solana gainers (using the specific endpoint from curl example)
+        logger.info("Step 2: Attempting to fetch Solana gainers")
+        try:
+            solana_gainers = api.get_solana_gainers()
+            print("\n=== Solana Gainers ===")
+            pretty_print_json(solana_gainers)
+        except Exception as e:
+            logger.error(f"Failed to fetch Solana gainers: {str(e)}")
+            logger.info("Continuing with other Solana endpoints...")
+        
+        # Step 3: Try to get hot pairs for Solana
+        logger.info("Step 3: Attempting to fetch hot pairs for Solana")
         try:
             solana_hot_pairs = api.get_solana_hot_pairs()
             print("\n=== Hot Solana Pairs ===")
@@ -338,8 +400,8 @@ def run_demo() -> None:
                 if pair_address:
                     logger.info(f"Selected Solana pair for detailed analysis: {pair_address}")
                     
-                    # Step 3: Get detailed info for this pair
-                    logger.info("Step 3: Fetching detailed Solana pair info")
+                    # Step 4: Get detailed info for this pair
+                    logger.info("Step 4: Fetching detailed Solana pair info")
                     try:
                         pair_info = api.get_solana_pair_info(pair_address)
                         print(f"\n=== Solana Pair Info for {pair_address} ===")
@@ -351,8 +413,8 @@ def run_demo() -> None:
         except Exception as e:
             logger.error(f"Failed to fetch hot Solana pairs: {str(e)}")
         
-        # Step 4: Try to get popular tokens on Solana
-        logger.info("Step 4: Attempting to fetch popular tokens on Solana")
+        # Step 5: Try to get popular tokens on Solana
+        logger.info("Step 5: Attempting to fetch popular tokens on Solana")
         try:
             solana_tokens = api.get_solana_tokens()
             print("\n=== Popular Solana Tokens ===")

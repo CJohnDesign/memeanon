@@ -5,6 +5,7 @@ A simple Python script to demonstrate connectivity with the DexTools API, specif
 ## Features
 
 - Tests API connectivity
+- Fetches top gaining tokens on Solana (using `/ranking/solana/gainers` endpoint)
 - Fetches hot trading pairs on Solana
 - Gets detailed information about specific pairs
 - Retrieves popular tokens on Solana
@@ -36,6 +37,8 @@ cp .env.example .env
 DEXTOOLS_API_KEY=your_actual_api_key_here
 ```
 
+You can use the example API key from the curl command for testing: `UFYgd1VSeq7ZdWbPQDEPQ6fuQ63QahNb2n4vntbi`
+
 ## Usage
 
 Simply run the script:
@@ -46,11 +49,23 @@ python dextools_demo.py
 
 The script will:
 1. Test API connectivity
-2. Fetch hot pairs on Solana
-3. Get detailed information about the first hot pair
-4. Retrieve popular tokens on Solana
+2. Fetch top gaining tokens on Solana (using the specific endpoint from the curl example)
+3. Fetch hot pairs on Solana
+4. Get detailed information about the first hot pair
+5. Retrieve popular tokens on Solana
 
 All results will be displayed in the console.
+
+## API Endpoints Used
+
+The script primarily uses the following endpoints:
+
+```
+https://public-api.dextools.io/trial/v2/ranking/solana/gainers
+https://public-api.dextools.io/trial/v2/ranking/solana/hot
+https://public-api.dextools.io/trial/v2/tokens/solana/list
+https://public-api.dextools.io/trial/v2/pair/solana/{pair_address}
+```
 
 ## Troubleshooting
 
