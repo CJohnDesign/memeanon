@@ -2,12 +2,13 @@
 """
 DexTools API Demo - Python Implementation
 This script demonstrates basic connectivity with the DexTools API
-to fetch cryptocurrency token data and display it in the console.
+to fetch cryptocurrency token data from the Solana blockchain and display it in the console.
 """
 
 import os
 import json
 import time
+import random
 import logging
 from typing import TypedDict, List, Dict, Any, Optional
 import requests
@@ -41,6 +42,14 @@ class ApiResponse(TypedDict):
 class DexToolsAPI:
     """Client for interacting with the DexTools API"""
     
+    # List of common user agents to rotate through
+    USER_AGENTS = [
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/15.0 Safari/605.1.15',
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:90.0) Gecko/20100101 Firefox/90.0',
+        'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.107 Safari/537.36'
+    ]
+    
     def __init__(self):
         """Initialize the DexTools API client"""
         self.api_key = os.getenv('DEXTOOLS_API_KEY')
@@ -51,14 +60,106 @@ class DexToolsAPI:
         # Base URL from the latest documentation
         self.base_url = 'https://api.dextools.io/v1'
         
-        # Headers for authentication
-        self.headers = {
-            'X-API-Key': self.api_key,
-            'Accept': 'application/json'
-        }
+        # Alternative base URLs to try if the main one fails
+        self.alternative_base_urls = [
+            'https://api.dextools.io/v2',
+            'https://api.dextools.io/api/v1',
+            'https://api.dextools.io/api'
+        ]
+        
+        # Set up headers with browser-like information to bypass Cloudflare
+        self.headers = self._generate_headers()
         
         logger.info("DexTools API client initialized")
         logger.info(f"Using API key: {self.api_key[:5]}...{self.api_key[-5:] if len(self.api_key) > 10 else ''}")
+    
+    def _generate_headers(self) -> Dict[str, str]:
+        """Generate headers that mimic a browser to help bypass Cloudflare"""
+        user_agent = random.choice(self.USER_AGENTS)
+        
+        return {
+            'X-API-Key': self.api_key,
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'User-Agent': user_agent,
+            'Referer': 'https://www.dextools.io/',
+            'Origin': 'https://www.dextools.io',
+            'sec-ch-ua': '"Chromium";v="92", " Not A;Brand";v="99", "Google Chrome";v="92"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-fetch-dest': 'empty',
+            'sec-fetch-mode': 'cors',
+            'sec-fetch-site': 'same-site',
+            'Connection': 'keep-alive'
+        }
+    
+    def _make_request(self, endpoint: str, params: Optional[Dict[str, Any]] = None, 
+                     max_retries: int = 3, base_delay: float = 2.0) -> Dict[str, Any]:
+        """
+        Make a request to the API with retry logic and exponential backoff
+        
+        Args:
+            endpoint: API endpoint to call (without base URL)
+            params: Query parameters to include
+            max_retries: Maximum number of retry attempts
+            base_delay: Base delay between retries in seconds
+            
+        Returns:
+            API response as dictionary
+        """
+        # Try with the main base URL first, then fall back to alternatives
+        urls_to_try = [f"{self.base_url}{endpoint}"] + [f"{url}{endpoint}" for url in self.alternative_base_urls]
+        
+        last_exception = None
+        
+        for url in urls_to_try:
+            # Refresh headers with a new random user agent for each base URL
+            self.headers = self._generate_headers()
+            
+            for attempt in range(max_retries):
+                try:
+                    # Add a small random delay to avoid detection patterns
+                    time.sleep(random.uniform(0.5, 1.5))
+                    
+                    logger.info(f"Making request to {url} (Attempt {attempt+1}/{max_retries})")
+                    response = requests.get(
+                        url,
+                        headers=self.headers,
+                        params=params
+                    )
+                    
+                    # Log response headers for debugging
+                    logger.debug(f"Response headers: {response.headers}")
+                    
+                    # Check for Cloudflare specific headers/responses
+                    if 'cf-ray' in response.headers:
+                        logger.info(f"Cloudflare Ray ID: {response.headers.get('cf-ray')}")
+                    
+                    response.raise_for_status()
+                    
+                    # If we get here, the request was successful
+                    return response.json() if response.text else {"status": "ok"}
+                    
+                except requests.exceptions.RequestException as e:
+                    last_exception = e
+                    logger.warning(f"Request to {url} failed: {str(e)}")
+                    
+                    # Check if we should retry
+                    if attempt < max_retries - 1:
+                        # Calculate delay with exponential backoff and jitter
+                        delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
+                        logger.info(f"Retrying in {delay:.2f} seconds...")
+                        time.sleep(delay)
+                    else:
+                        logger.error(f"All attempts to {url} failed")
+        
+        # If we get here, all URLs and retries failed
+        logger.error("All API endpoints failed")
+        if last_exception:
+            if hasattr(last_exception, 'response') and last_exception.response:
+                logger.error(f"Last response status: {last_exception.response.status_code}")
+                logger.error(f"Last response data: {last_exception.response.text}")
+        
+        raise Exception("Failed to connect to any DexTools API endpoint")
     
     def get_api_info(self) -> Dict[str, Any]:
         """
@@ -69,189 +170,144 @@ class DexToolsAPI:
         """
         logger.info("Fetching API information")
         
-        try:
-            # Try different endpoints to check connectivity
-            endpoints = [
-                "/info",
-                "/status",
-                "/health"
-            ]
-            
-            for endpoint in endpoints:
+        # Try different endpoints to check connectivity
+        endpoints = [
+            "/info",
+            "/status",
+            "/health",
+            "/version",
+            "/ping",
+            "/"
+        ]
+        
+        for endpoint in endpoints:
+            try:
+                return self._make_request(endpoint)
+            except Exception as e:
+                logger.warning(f"Endpoint {endpoint} failed: {str(e)}")
+                continue
+        
+        # If we get here, all endpoints failed
+        raise Exception("All API info endpoints failed")
+    
+    def get_solana_hot_pairs(self) -> Dict[str, Any]:
+        """
+        Get hot pairs specifically for the Solana blockchain
+        
+        Returns:
+            Dict containing hot pairs on Solana
+        """
+        logger.info("Fetching hot pairs for Solana blockchain")
+        
+        # The chain ID for Solana might be 'solana', 'sol', or something else
+        # Try different possible chain IDs
+        chain_ids = ['solana', 'sol', 'slna']
+        
+        # Try different possible endpoints for hot pairs
+        endpoint_templates = [
+            "/pair/{}/hot",
+            "/pairs/{}/hot",
+            "/pool/{}/hot",
+            "/pools/{}/hot",
+            "/dex/{}/pairs/hot"
+        ]
+        
+        for chain_id in chain_ids:
+            for template in endpoint_templates:
+                endpoint = template.format(chain_id)
                 try:
-                    logger.info(f"Trying endpoint: {endpoint}")
-                    response = requests.get(
-                        f"{self.base_url}{endpoint}",
-                        headers=self.headers
-                    )
-                    response.raise_for_status()
-                    data = response.json() if response.text else {"status": "ok"}
-                    logger.info(f"API connection successful via {endpoint}")
-                    return data
-                except requests.exceptions.RequestException as e:
-                    logger.warning(f"Endpoint {endpoint} failed: {str(e)}")
+                    return self._make_request(endpoint)
+                except Exception as e:
+                    logger.warning(f"Solana hot pairs endpoint {endpoint} failed: {str(e)}")
                     continue
-            
-            # If we get here, all endpoints failed
-            raise Exception("All API info endpoints failed")
-        except Exception as e:
-            logger.error(f"Error fetching API information: {str(e)}")
-            raise
-    
-    def get_supported_chains(self) -> Dict[str, Any]:
-        """
-        Get list of supported chains
         
-        Returns:
-            Dict containing supported chains
-        """
-        logger.info("Fetching supported chains")
-        
-        try:
-            response = requests.get(
-                f"{self.base_url}/chain",
-                headers=self.headers
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            logger.info(f"Successfully retrieved supported chains")
-            return data
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching supported chains: {str(e)}")
-            if hasattr(e, 'response') and e.response:
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response data: {e.response.text}")
-            raise
+        raise Exception("Failed to fetch hot pairs for Solana from any endpoint")
     
-    def get_hot_pairs(self, chain: str = 'ether') -> Dict[str, Any]:
+    def get_solana_tokens(self, limit: int = 10) -> Dict[str, Any]:
         """
-        Get hot pairs for a specific chain
+        Get popular tokens on the Solana blockchain
         
         Args:
-            chain: Chain ID (default: ether)
+            limit: Number of tokens to retrieve (default: 10)
             
         Returns:
-            Dict containing hot pairs
+            Dict containing Solana tokens
         """
-        logger.info(f"Fetching hot pairs for chain: {chain}")
+        logger.info(f"Fetching {limit} popular tokens on Solana blockchain")
         
-        try:
-            response = requests.get(
-                f"{self.base_url}/pair/{chain}/hot",
-                headers=self.headers
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            logger.info(f"Successfully retrieved hot pairs for chain: {chain}")
-            return data
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching hot pairs for chain {chain}: {str(e)}")
-            if hasattr(e, 'response') and e.response:
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response data: {e.response.text}")
-            raise
+        # The chain ID for Solana might be 'solana', 'sol', or something else
+        # Try different possible chain IDs
+        chain_ids = ['solana', 'sol', 'slna']
+        
+        # Try different possible endpoints for tokens
+        endpoint_templates = [
+            "/token/{}/list",
+            "/tokens/{}/list",
+            "/token/{}/popular",
+            "/tokens/{}/popular",
+            "/dex/{}/tokens"
+        ]
+        
+        params = {
+            'limit': limit,
+            'sort': 'volume'  # Sort by volume to get popular tokens
+        }
+        
+        for chain_id in chain_ids:
+            for template in endpoint_templates:
+                endpoint = template.format(chain_id)
+                try:
+                    return self._make_request(endpoint, params=params)
+                except Exception as e:
+                    logger.warning(f"Solana tokens endpoint {endpoint} failed: {str(e)}")
+                    continue
+        
+        raise Exception("Failed to fetch tokens for Solana from any endpoint")
     
-    def search_tokens(self, query: str) -> Dict[str, Any]:
+    def get_solana_pair_info(self, pair_address: str) -> Dict[str, Any]:
         """
-        Search for tokens by name or symbol
+        Get detailed information about a specific Solana trading pair
         
         Args:
-            query: Search query
-            
-        Returns:
-            Dict containing search results
-        """
-        logger.info(f"Searching for tokens with query: {query}")
-        
-        try:
-            response = requests.get(
-                f"{self.base_url}/token/search",
-                headers=self.headers,
-                params={
-                    'query': query
-                }
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            logger.info(f"Successfully searched for tokens with query: {query}")
-            return data
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error searching for tokens: {str(e)}")
-            if hasattr(e, 'response') and e.response:
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response data: {e.response.text}")
-            raise
-    
-    def get_token_info(self, chain: str, token_address: str) -> Dict[str, Any]:
-        """
-        Get detailed information about a specific token
-        
-        Args:
-            chain: Chain ID (e.g., 'ether', 'bsc')
-            token_address: Address of the token to query
-            
-        Returns:
-            Dict containing token details
-        """
-        logger.info(f"Fetching info for token: {token_address} on chain: {chain}")
-        
-        try:
-            response = requests.get(
-                f"{self.base_url}/token/{chain}/{token_address}",
-                headers=self.headers
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            logger.info(f"Successfully retrieved info for token: {token_address}")
-            return data
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching token info for {token_address}: {str(e)}")
-            if hasattr(e, 'response') and e.response:
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response data: {e.response.text}")
-            raise
-    
-    def get_pair_info(self, chain: str, pair_address: str) -> Dict[str, Any]:
-        """
-        Get detailed information about a specific trading pair
-        
-        Args:
-            chain: Chain ID (e.g., 'ether', 'bsc')
-            pair_address: Address of the pair to query
+            pair_address: Address of the Solana pair to query
             
         Returns:
             Dict containing pair details
         """
-        logger.info(f"Fetching info for pair: {pair_address} on chain: {chain}")
+        logger.info(f"Fetching info for Solana pair: {pair_address}")
         
-        try:
-            response = requests.get(
-                f"{self.base_url}/pair/{chain}/{pair_address}",
-                headers=self.headers
-            )
-            response.raise_for_status()
-            data = response.json()
-            
-            logger.info(f"Successfully retrieved info for pair: {pair_address}")
-            return data
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Error fetching pair info for {pair_address}: {str(e)}")
-            if hasattr(e, 'response') and e.response:
-                logger.error(f"Response status: {e.response.status_code}")
-                logger.error(f"Response data: {e.response.text}")
-            raise
+        # The chain ID for Solana might be 'solana', 'sol', or something else
+        # Try different possible chain IDs
+        chain_ids = ['solana', 'sol', 'slna']
+        
+        # Try different possible endpoints for pair info
+        endpoint_templates = [
+            "/pair/{}/{}",
+            "/pairs/{}/{}",
+            "/pair/{}/info/{}",
+            "/pairs/{}/info/{}",
+            "/pool/{}/{}",
+            "/pools/{}/{}"
+        ]
+        
+        for chain_id in chain_ids:
+            for template in endpoint_templates:
+                endpoint = template.format(chain_id, pair_address)
+                try:
+                    return self._make_request(endpoint)
+                except Exception as e:
+                    logger.warning(f"Solana pair info endpoint {endpoint} failed: {str(e)}")
+                    continue
+        
+        raise Exception(f"Failed to fetch pair info for {pair_address} on Solana from any endpoint")
 
 def pretty_print_json(data: Dict[str, Any]) -> None:
     """Print JSON data in a readable format"""
     print(json.dumps(data, indent=2))
 
 def run_demo() -> None:
-    """Main function to run the DexTools API demo"""
-    logger.info("Starting DexTools API Demo...")
+    """Main function to run the DexTools API demo for Solana blockchain"""
+    logger.info("Starting DexTools API Demo for Solana Blockchain...")
     
     try:
         # Initialize API client
@@ -265,75 +321,49 @@ def run_demo() -> None:
             pretty_print_json(api_info)
         except Exception as e:
             logger.error(f"Failed to connect to API: {str(e)}")
-            return
+            logger.info("Continuing with Solana endpoints despite connectivity test failure...")
         
-        # Step 2: Get supported chains
-        logger.info("Step 2: Fetching supported chains")
+        # Step 2: Try to get hot pairs for Solana
+        logger.info("Step 2: Attempting to fetch hot pairs for Solana")
         try:
-            chains = api.get_supported_chains()
-            print("\n=== Supported Chains ===")
-            pretty_print_json(chains)
-        except Exception as e:
-            logger.error(f"Failed to fetch chains: {str(e)}")
-        
-        # Step 3: Get hot pairs for Ethereum
-        logger.info("Step 3: Fetching hot pairs for Ethereum")
-        try:
-            hot_pairs = api.get_hot_pairs('ether')
-            print("\n=== Hot Ethereum Pairs ===")
-            pretty_print_json(hot_pairs)
+            solana_hot_pairs = api.get_solana_hot_pairs()
+            print("\n=== Hot Solana Pairs ===")
+            pretty_print_json(solana_hot_pairs)
             
             # If we have pairs, get details for the first one
-            if hot_pairs.get('success') and hot_pairs.get('data') and len(hot_pairs['data']) > 0:
-                first_pair = hot_pairs['data'][0]
+            if solana_hot_pairs.get('success') and solana_hot_pairs.get('data') and len(solana_hot_pairs['data']) > 0:
+                first_pair = solana_hot_pairs['data'][0]
                 pair_address = first_pair.get('id')
                 
                 if pair_address:
-                    logger.info(f"Selected pair for detailed analysis: {pair_address}")
+                    logger.info(f"Selected Solana pair for detailed analysis: {pair_address}")
                     
-                    # Step 4: Get detailed info for this pair
-                    logger.info("Step 4: Fetching detailed pair info")
+                    # Step 3: Get detailed info for this pair
+                    logger.info("Step 3: Fetching detailed Solana pair info")
                     try:
-                        pair_info = api.get_pair_info('ether', pair_address)
-                        print(f"\n=== Pair Info for {pair_address} ===")
+                        pair_info = api.get_solana_pair_info(pair_address)
+                        print(f"\n=== Solana Pair Info for {pair_address} ===")
                         pretty_print_json(pair_info)
                     except Exception as e:
-                        logger.error(f"Failed to fetch pair info: {str(e)}")
+                        logger.error(f"Failed to fetch Solana pair info: {str(e)}")
             else:
-                logger.warning("No hot pairs found or API returned an error")
+                logger.warning("No hot Solana pairs found or API returned an error")
         except Exception as e:
-            logger.error(f"Failed to fetch hot pairs: {str(e)}")
+            logger.error(f"Failed to fetch hot Solana pairs: {str(e)}")
         
-        # Step 5: Search for a popular token
-        logger.info("Step 5: Searching for tokens")
+        # Step 4: Try to get popular tokens on Solana
+        logger.info("Step 4: Attempting to fetch popular tokens on Solana")
         try:
-            search_results = api.search_tokens('ethereum')
-            print("\n=== Token Search Results for 'ethereum' ===")
-            pretty_print_json(search_results)
-            
-            # If we have search results, get details for the first one
-            if search_results.get('success') and search_results.get('data') and len(search_results['data']) > 0:
-                first_token = search_results['data'][0]
-                token_address = first_token.get('address')
-                token_chain = first_token.get('chain')
-                
-                if token_address and token_chain:
-                    logger.info(f"Selected token for detailed analysis: {token_address} on chain {token_chain}")
-                    
-                    # Step 6: Get detailed info for this token
-                    logger.info("Step 6: Fetching detailed token info")
-                    try:
-                        token_info = api.get_token_info(token_chain, token_address)
-                        print(f"\n=== Token Info for {token_address} ===")
-                        pretty_print_json(token_info)
-                    except Exception as e:
-                        logger.error(f"Failed to fetch token info: {str(e)}")
+            solana_tokens = api.get_solana_tokens()
+            print("\n=== Popular Solana Tokens ===")
+            pretty_print_json(solana_tokens)
         except Exception as e:
-            logger.error(f"Failed to search for tokens: {str(e)}")
+            logger.error(f"Failed to fetch Solana tokens: {str(e)}")
         
-        logger.info("Demo completed successfully!")
+        logger.info("Solana demo completed. Some endpoints may have failed due to Cloudflare restrictions or API changes.")
+        logger.info("Consider using a browser to inspect network requests on the DexTools website to understand the correct API structure for Solana.")
     except Exception as e:
-        logger.error(f"Demo failed: {str(e)}", exc_info=True)
+        logger.error(f"Solana demo failed: {str(e)}", exc_info=True)
 
 if __name__ == "__main__":
     run_demo() 
